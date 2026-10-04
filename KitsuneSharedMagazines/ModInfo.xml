@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xml>
+	<Name value="KitsuneSharedMagazines"/>
+	<DisplayName value="Kitsune Shared Magazines"/>
+	<Version value="0.1.0"/>
+	<Description value="When you read a crafting skill magazine, everyone in your party learns it too, wherever they are on the map. Install on the server and on every client (needs EAC off)."/>
+	<Author value="Ada"/>
+	<Website value=""/>
+</xml>
