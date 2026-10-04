@@ -34,11 +34,11 @@ using UnityEngine;
 //
 // Perk books (the "1/7" series volumes) ride the same three hops with their
 // own verbs: "ksm_book <perk> <book item>" up, "ksm_bookapply <perk> <book
-// item> <reader name>" down. A book is detected by MinEventActionSetProgression
-// Level unlocking a ProgressionType.Book perk that is the reading item's own
-// "Unlocks" — so the series "Complete" bonus the reader earns is never shared
-// as such. Each member instead earns it themselves, the vanilla way: when the
-// shared volume leaves them with every other book in the series unlocked.
+// item> <reader name>" down. A book is any item whose "Unlocks" names a
+// ProgressionType.Book perk, shared whenever it is read — even by someone who
+// already knew it. The series "Complete" bonus is never shared as such: each
+// member earns it themselves, the vanilla way, when the shared volume leaves
+// them with every other book in the series unlocked.
 
 public class KitsuneSharedMagazinesInit : IModApi
 {
@@ -53,23 +53,25 @@ public class KitsuneSharedMagazinesInit : IModApi
     }
 }
 
-// Step 1: the reader's client. Prefix records the local player's level,
-// postfix shares whatever the magazine actually added (vanilla applies the
-// PointsPerMagazine sandbox option and clamps to MaxLevel, so the real delta
-// can differ from the XML's level="1").
+// Step 1: the reader's client. Shares what the magazine is worth, not what
+// the reader gained: a reader whose skill is already maxed gains nothing but
+// still teaches the party. Vanilla turns level="1" into the PointsPerMagazine
+// sandbox option for crafting skills; each member clamps to their own max.
 [HarmonyPatch(typeof(MinEventActionAddProgressionLevel))]
 [HarmonyPatch("Execute")]
 public class KSM_MagazineReadPatch
 {
     public static void Prefix(MinEventActionAddProgressionLevel __instance, MinEventParams _params, out int __state)
     {
-        __state = -1;
+        __state = 0;
         try
         {
             if (!KSM_Share.IsMagazine(_params)) return;
             EntityPlayerLocal player = KSM_Share.LocalTarget(__instance);
-            ProgressionValue value = KSM_Share.CraftingSkill(player, __instance.progressionName);
-            if (value != null) __state = value.Level;
+            if (KSM_Share.CraftingSkill(player, __instance.progressionName) == null) return;
+            __state = __instance.level == 1
+                ? global::SandboxOptions.SandboxOptionManager.GetInt(global::SandboxOptions.SandboxOptions.PointsPerMagazine)
+                : __instance.level;
         }
         catch (Exception ex)
         {
@@ -79,15 +81,12 @@ public class KSM_MagazineReadPatch
 
     public static void Postfix(MinEventActionAddProgressionLevel __instance, int __state)
     {
-        if (__state < 0) return;
+        if (__state <= 0) return;
         try
         {
             EntityPlayerLocal player = KSM_Share.LocalTarget(__instance);
-            ProgressionValue value = KSM_Share.CraftingSkill(player, __instance.progressionName);
-            if (value == null) return;
-            int gained = value.Level - __state;
-            if (gained <= 0) return;
-            KSM_Share.ReportRead(player, __instance.progressionName, gained);
+            if (player == null) return;
+            KSM_Share.ReportRead(player, __instance.progressionName, __state);
         }
         catch (Exception ex)
         {
@@ -96,23 +95,24 @@ public class KSM_MagazineReadPatch
     }
 }
 
-// Step 1 for perk books. The book's own perk going from 0 to unlocked is a
-// real first read; a book you already know does nothing (vanilla's
-// ProgressionLevel == 0 requirement), so there is nothing to share.
-[HarmonyPatch(typeof(MinEventActionSetProgressionLevel))]
-[HarmonyPatch("Execute")]
-public class KSM_BookReadPatch
+// Step 1 for perk books. Hooked on the read itself (ItemActionEat), not on the
+// book's unlock effect: that effect is skipped when the reader already knows
+// the book (vanilla's ProgressionLevel == 0 requirement), but the book is still
+// read and used up, so it should still teach the party. Members who already
+// have it are skipped on their side. A held book finishes in consume(); "Read"
+// from the inventory goes through ExecuteInstantAction.
+[HarmonyPatch(typeof(ItemActionEat))]
+[HarmonyPatch("consume")]
+public class KSM_BookReadHeldPatch
 {
-    public static void Prefix(MinEventActionSetProgressionLevel __instance, MinEventParams _params, out int __state)
+    public static void Prefix(ItemActionData _actionData, out ItemClass __state)
     {
-        __state = -1;
+        __state = null;
         try
         {
-            string bookItem = KSM_Share.BookItemFor(_params, __instance.progressionName);
-            if (bookItem == null) return;
-            EntityPlayerLocal player = KSM_Share.LocalTarget(__instance);
-            ProgressionValue value = KSM_Share.Book(player, __instance.progressionName);
-            if (value != null) __state = value.Level;
+            if (!(_actionData is ItemActionEat.MyInventoryData data) || !data.bEatingStarted) return;
+            if (!(_actionData.invData?.holdingEntity is EntityPlayerLocal player) || player.isEntityRemote) return;
+            __state = KSM_Share.BookClass(_actionData.invData.itemStack?.itemValue);
         }
         catch (Exception ex)
         {
@@ -120,15 +120,44 @@ public class KSM_BookReadPatch
         }
     }
 
-    public static void Postfix(MinEventActionSetProgressionLevel __instance, MinEventParams _params, int __state)
+    public static void Postfix(ItemActionData _actionData, ItemClass __state)
     {
-        if (__state != 0) return;
+        if (__state == null) return;
         try
         {
-            EntityPlayerLocal player = KSM_Share.LocalTarget(__instance);
-            ProgressionValue value = KSM_Share.Book(player, __instance.progressionName);
-            if (value == null || value.Level <= 0) return;
-            KSM_Share.ReportBook(player, __instance.progressionName, KSM_Share.BookItemFor(_params, __instance.progressionName));
+            KSM_Share.ReportBook(_actionData.invData.holdingEntity as EntityPlayerLocal, __state.Unlocks, __state.GetItemName());
+        }
+        catch (Exception ex)
+        {
+            Log.Error("[KitsuneSharedMagazines] sharing a book failed: " + ex);
+        }
+    }
+}
+
+[HarmonyPatch(typeof(ItemActionEat))]
+[HarmonyPatch("ExecuteInstantAction")]
+public class KSM_BookReadInstantPatch
+{
+    public static void Prefix(EntityAlive ent, ItemStack stack, out ItemClass __state)
+    {
+        __state = null;
+        try
+        {
+            if (!(ent is EntityPlayerLocal player) || player.isEntityRemote) return;
+            __state = KSM_Share.BookClass(stack?.itemValue);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("[KitsuneSharedMagazines] book check failed: " + ex);
+        }
+    }
+
+    public static void Postfix(EntityAlive ent, bool __result, ItemClass __state)
+    {
+        if (__state == null || !__result) return;
+        try
+        {
+            KSM_Share.ReportBook(ent as EntityPlayerLocal, __state.Unlocks, __state.GetItemName());
         }
         catch (Exception ex)
         {
@@ -318,16 +347,14 @@ public static class KSM_Share
 
     // ---- Perk books ----
 
-    // The book item behind this SetProgressionLevel, or null when the action
-    // is not a book unlocking its own perk (the series bonus, a quest, an
-    // admin command...).
-    public static string BookItemFor(MinEventParams _params, string progressionName)
+    // The book's item class when this item is a perk book (its Unlocks names a
+    // ProgressionType.Book perk), else null.
+    public static ItemClass BookClass(ItemValue itemValue)
     {
-        ItemClass itemClass = _params?.ItemValue?.ItemClass;
-        if (itemClass == null || string.IsNullOrEmpty(progressionName)) return null;
-        if (!string.Equals(itemClass.Unlocks, progressionName, StringComparison.Ordinal)) return null;
-        Progression.ProgressionClasses.TryGetValue(progressionName, out ProgressionClass progression);
-        return progression != null && progression.IsBook ? itemClass.GetItemName() : null;
+        ItemClass itemClass = itemValue?.ItemClass;
+        if (itemClass == null || string.IsNullOrEmpty(itemClass.Unlocks)) return null;
+        Progression.ProgressionClasses.TryGetValue(itemClass.Unlocks, out ProgressionClass progression);
+        return progression != null && progression.IsBook ? itemClass : null;
     }
 
     public static ProgressionValue Book(EntityAlive player, string perkName)
@@ -340,7 +367,7 @@ public static class KSM_Share
 
     public static void ReportBook(EntityPlayerLocal reader, string perkName, string bookItem)
     {
-        if (bookItem == null) return;
+        if (reader == null || bookItem == null) return;
         ConnectionManager connections = SingletonMonoBehaviour<ConnectionManager>.Instance;
         if (connections == null) return;
         if (connections.IsServer)
