@@ -10,11 +10,12 @@ with **EAC off** on the server and on each client.
 
 - **Magazines:** only crafting skills, and only from items tagged `csm`, which
   covers all 24 vanilla skill magazines. The admin max-all magazine is never shared.
-  Members get the same number of levels the reader actually gained. That respects the
-  `PointsPerMagazine` sandbox option and each skill's max level.
+  Members get what the magazine is worth (the `PointsPerMagazine` sandbox
+  option), even when the reader's own skill is already maxed. Each member is
+  capped at their own max level.
 - **Perk books** (the 7-volume series, e.g. Lucky Looter 1/7): a member who
-  hasn't read that volume gets it unlocked. Members who already have it get
-  nothing. The series bonus is never copied from the reader: a member gets it
+  hasn't read that volume gets it unlocked, even if the reader already knew
+  it. Members who already have it get nothing. The series bonus is never copied from the reader: a member gets it
   only when the shared volume completes *their* set, same as vanilla.
 - Party members must be online. Distance doesn't matter.
 - Each member sees the normal crafting-skill notification and unlock messages,
@@ -27,8 +28,8 @@ with **EAC off** on the server and on each client.
 The mod adds no new network packages. All three hops reuse the vanilla
 console-command packages and intercept them with Harmony:
 
-1. The reader's client notices a magazine raised a crafting skill and sends
-   `ksm_read <skill> <levels>` to the server. A first read of a perk book sends
+1. The reader's client notices a magazine was read for a crafting skill and sends
+   `ksm_read <skill> <levels>` to the server. Reading a perk book sends
    `ksm_book <perk> <book item>`.
 2. The server catches that before it reaches the console, checks it (crafting
    skill, 1-10 levels, at most one read per 0.5 s per player), and sends
