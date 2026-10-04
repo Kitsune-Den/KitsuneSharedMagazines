@@ -31,6 +31,14 @@ using UnityEngine;
 // Only crafting skills (ProgressionType.Crafting) are shared, and only from
 // items tagged "csm" — the 24 vanilla skill magazines. The admin max-all
 // magazine (tag "admin", level -1) is deliberately excluded.
+//
+// Perk books (the "1/7" series volumes) ride the same three hops with their
+// own verbs: "ksm_book <perk> <book item>" up, "ksm_bookapply <perk> <book
+// item> <reader name>" down. A book is detected by MinEventActionSetProgression
+// Level unlocking a ProgressionType.Book perk that is the reading item's own
+// "Unlocks" — so the series "Complete" bonus the reader earns is never shared
+// as such. Each member instead earns it themselves, the vanilla way: when the
+// shared volume leaves them with every other book in the series unlocked.
 
 public class KitsuneSharedMagazinesInit : IModApi
 {
@@ -59,7 +67,7 @@ public class KSM_MagazineReadPatch
         try
         {
             if (!KSM_Share.IsMagazine(_params)) return;
-            EntityPlayerLocal player = LocalTarget(__instance);
+            EntityPlayerLocal player = KSM_Share.LocalTarget(__instance);
             ProgressionValue value = KSM_Share.CraftingSkill(player, __instance.progressionName);
             if (value != null) __state = value.Level;
         }
@@ -74,7 +82,7 @@ public class KSM_MagazineReadPatch
         if (__state < 0) return;
         try
         {
-            EntityPlayerLocal player = LocalTarget(__instance);
+            EntityPlayerLocal player = KSM_Share.LocalTarget(__instance);
             ProgressionValue value = KSM_Share.CraftingSkill(player, __instance.progressionName);
             if (value == null) return;
             int gained = value.Level - __state;
@@ -86,16 +94,46 @@ public class KSM_MagazineReadPatch
             Log.Error("[KitsuneSharedMagazines] sharing a read failed: " + ex);
         }
     }
+}
 
-    private static EntityPlayerLocal LocalTarget(MinEventActionAddProgressionLevel action)
+// Step 1 for perk books. The book's own perk going from 0 to unlocked is a
+// real first read; a book you already know does nothing (vanilla's
+// ProgressionLevel == 0 requirement), so there is nothing to share.
+[HarmonyPatch(typeof(MinEventActionSetProgressionLevel))]
+[HarmonyPatch("Execute")]
+public class KSM_BookReadPatch
+{
+    public static void Prefix(MinEventActionSetProgressionLevel __instance, MinEventParams _params, out int __state)
     {
-        List<EntityAlive> targets = action.targets;
-        if (targets == null) return null;
-        for (int i = 0; i < targets.Count; i++)
+        __state = -1;
+        try
         {
-            if (targets[i] is EntityPlayerLocal local && !local.isEntityRemote) return local;
+            string bookItem = KSM_Share.BookItemFor(_params, __instance.progressionName);
+            if (bookItem == null) return;
+            EntityPlayerLocal player = KSM_Share.LocalTarget(__instance);
+            ProgressionValue value = KSM_Share.Book(player, __instance.progressionName);
+            if (value != null) __state = value.Level;
         }
-        return null;
+        catch (Exception ex)
+        {
+            Log.Error("[KitsuneSharedMagazines] book check failed: " + ex);
+        }
+    }
+
+    public static void Postfix(MinEventActionSetProgressionLevel __instance, MinEventParams _params, int __state)
+    {
+        if (__state != 0) return;
+        try
+        {
+            EntityPlayerLocal player = KSM_Share.LocalTarget(__instance);
+            ProgressionValue value = KSM_Share.Book(player, __instance.progressionName);
+            if (value == null || value.Level <= 0) return;
+            KSM_Share.ReportBook(player, __instance.progressionName, KSM_Share.BookItemFor(_params, __instance.progressionName));
+        }
+        catch (Exception ex)
+        {
+            Log.Error("[KitsuneSharedMagazines] sharing a book failed: " + ex);
+        }
     }
 }
 
@@ -108,10 +146,13 @@ public class KSM_ServerInboxPatch
     public static bool Prefix(NetPackageConsoleCmdServer __instance, World _world)
     {
         string cmd = __instance.cmd;
-        if (cmd == null || !cmd.StartsWith(KSM_Share.ReadVerb + " ", StringComparison.Ordinal)) return true;
+        bool isRead = cmd != null && cmd.StartsWith(KSM_Share.ReadVerb + " ", StringComparison.Ordinal);
+        bool isBook = cmd != null && cmd.StartsWith(KSM_Share.BookVerb + " ", StringComparison.Ordinal);
+        if (!isRead && !isBook) return true;
         try
         {
-            if (_world != null) KSM_Share.OnReadReport(_world, __instance.Sender, cmd);
+            if (_world != null && isRead) KSM_Share.OnReadReport(_world, __instance.Sender, cmd);
+            if (_world != null && isBook) KSM_Share.OnBookReport(_world, __instance.Sender, cmd);
         }
         catch (Exception ex)
         {
@@ -129,14 +170,14 @@ public class KSM_ClientInboxPatch
     public static bool Prefix(NetPackageConsoleCmdClient __instance, World _world)
     {
         List<string> lines = __instance.lines;
-        if (!__instance.bExecute || lines == null || lines.Count == 0 || lines[0] == null
-            || !lines[0].StartsWith(KSM_Share.ApplyVerb + " ", StringComparison.Ordinal))
-        {
-            return true;
-        }
+        if (!__instance.bExecute || lines == null || lines.Count == 0 || lines[0] == null) return true;
+        bool isApply = lines[0].StartsWith(KSM_Share.ApplyVerb + " ", StringComparison.Ordinal);
+        bool isBook = lines[0].StartsWith(KSM_Share.BookApplyVerb + " ", StringComparison.Ordinal);
+        if (!isApply && !isBook) return true;
         try
         {
-            if (_world != null) KSM_Share.OnApply(_world, lines[0]);
+            if (_world != null && isApply) KSM_Share.OnApply(_world, lines[0]);
+            if (_world != null && isBook) KSM_Share.OnBookApply(_world, lines[0]);
         }
         catch (Exception ex)
         {
@@ -150,6 +191,8 @@ public static class KSM_Share
 {
     public const string ReadVerb = "ksm_read";
     public const string ApplyVerb = "ksm_apply";
+    public const string BookVerb = "ksm_book";
+    public const string BookApplyVerb = "ksm_bookapply";
 
     // A magazine read takes about a second (Eat action Delay 1.0), so a faster
     // stream of reports from one player is not real reading.
@@ -158,6 +201,19 @@ public static class KSM_Share
 
     private static readonly FastTags<TagGroup.Global> MagazineTag = FastTags<TagGroup.Global>.Parse("csm");
     private static readonly Dictionary<int, float> lastReportAt = new Dictionary<int, float>();
+
+    // The local player among an action's targets, if any (null on a dedicated
+    // server, where every reader is remote).
+    public static EntityPlayerLocal LocalTarget(MinEventActionTargetedBase action)
+    {
+        List<EntityAlive> targets = action.targets;
+        if (targets == null) return null;
+        for (int i = 0; i < targets.Count; i++)
+        {
+            if (targets[i] is EntityPlayerLocal local && !local.isEntityRemote) return local;
+        }
+        return null;
+    }
 
     public static bool IsMagazine(MinEventParams _params)
     {
@@ -199,22 +255,44 @@ public static class KSM_Share
         EntityPlayer reader = world.GetEntity(sender.entityId) as EntityPlayer;
         if (CraftingSkill(reader, parts[1]) == null) return;
 
+        if (!TakeReportSlot(sender)) return;
+        Share(reader, sender.playerName, parts[1], levels);
+    }
+
+    // Reading a magazine or a book takes about a second, so a faster stream of
+    // reports from one player is not real reading.
+    private static bool TakeReportSlot(ClientInfo sender)
+    {
         float now = Time.time;
         if (lastReportAt.TryGetValue(sender.entityId, out float last) && now - last < MinSecondsBetweenReports)
         {
             Log.Warning("[KitsuneSharedMagazines] Ignored a read report from " + sender.playerName + " (too fast)");
-            return;
+            return false;
         }
         lastReportAt[sender.entityId] = now;
-
-        Share(reader, sender.playerName, parts[1], levels);
+        return true;
     }
 
     // Server (or listen host): send the levels to every other party member.
     public static void Share(EntityPlayer reader, string readerName, string progressionName, int levels)
     {
+        int shared = SendToParty(reader,
+            host => Apply(host, progressionName, levels, readerName),
+            ApplyVerb + " " + progressionName + " " + levels + " " + readerName);
+
+        if (shared > 0)
+        {
+            Log.Out("[KitsuneSharedMagazines] " + readerName + " read " + progressionName + " +" + levels
+                + ", shared with " + shared + " party member(s)");
+        }
+    }
+
+    // Every other party member: the listen host in-process, everyone else as a
+    // console line to their client. Returns how many were reached.
+    private static int SendToParty(EntityPlayer reader, Action<EntityPlayerLocal> applyHost, string clientLine)
+    {
         Party party = reader?.Party;
-        if (party == null || party.MemberList == null) return;
+        if (party == null || party.MemberList == null) return 0;
 
         ConnectionManager connections = SingletonMonoBehaviour<ConnectionManager>.Instance;
         int shared = 0;
@@ -225,23 +303,140 @@ public static class KSM_Share
 
             if (member is EntityPlayerLocal host)
             {
-                Apply(host, progressionName, levels, readerName);
+                applyHost(host);
                 shared++;
                 continue;
             }
 
             ClientInfo client = connections?.Clients?.ForEntityId(member.entityId);
             if (client == null) continue;
-            client.SendPackage(NetPackageManager.GetPackage<NetPackageConsoleCmdClient>()
-                .Setup(ApplyVerb + " " + progressionName + " " + levels + " " + readerName, true));
+            client.SendPackage(NetPackageManager.GetPackage<NetPackageConsoleCmdClient>().Setup(clientLine, true));
             shared++;
         }
+        return shared;
+    }
+
+    // ---- Perk books ----
+
+    // The book item behind this SetProgressionLevel, or null when the action
+    // is not a book unlocking its own perk (the series bonus, a quest, an
+    // admin command...).
+    public static string BookItemFor(MinEventParams _params, string progressionName)
+    {
+        ItemClass itemClass = _params?.ItemValue?.ItemClass;
+        if (itemClass == null || string.IsNullOrEmpty(progressionName)) return null;
+        if (!string.Equals(itemClass.Unlocks, progressionName, StringComparison.Ordinal)) return null;
+        Progression.ProgressionClasses.TryGetValue(progressionName, out ProgressionClass progression);
+        return progression != null && progression.IsBook ? itemClass.GetItemName() : null;
+    }
+
+    public static ProgressionValue Book(EntityAlive player, string perkName)
+    {
+        if (player == null || player.Progression == null || string.IsNullOrEmpty(perkName)) return null;
+        ProgressionValue value = player.Progression.GetProgressionValue(perkName);
+        if (value == null || value.ProgressionClass == null || !value.ProgressionClass.IsBook) return null;
+        return value;
+    }
+
+    public static void ReportBook(EntityPlayerLocal reader, string perkName, string bookItem)
+    {
+        if (bookItem == null) return;
+        ConnectionManager connections = SingletonMonoBehaviour<ConnectionManager>.Instance;
+        if (connections == null) return;
+        if (connections.IsServer)
+        {
+            ShareBook(reader, reader.EntityName, perkName, bookItem);
+            return;
+        }
+        connections.SendToServer(NetPackageManager.GetPackage<NetPackageConsoleCmdServer>()
+            .Setup(BookVerb + " " + perkName + " " + bookItem));
+    }
+
+    // Server side: "ksm_book <perk> <book item>" from a client.
+    public static void OnBookReport(World world, ClientInfo sender, string cmd)
+    {
+        if (sender == null) return;
+        string[] parts = cmd.Split(' ');
+        if (parts.Length != 3) return;
+
+        // The named item must really be the book for that perk, and the
+        // reader must really have it now.
+        ItemClass book = ItemClass.GetItemClass(parts[2]);
+        if (book == null || !string.Equals(book.Unlocks, parts[1], StringComparison.Ordinal)) return;
+        EntityPlayer reader = world.GetEntity(sender.entityId) as EntityPlayer;
+        if (Book(reader, parts[1]) == null) return;
+
+        if (!TakeReportSlot(sender)) return;
+        ShareBook(reader, sender.playerName, parts[1], parts[2]);
+    }
+
+    public static void ShareBook(EntityPlayer reader, string readerName, string perkName, string bookItem)
+    {
+        int shared = SendToParty(reader,
+            host => ApplyBook(host, perkName, bookItem, readerName),
+            BookApplyVerb + " " + perkName + " " + bookItem + " " + readerName);
 
         if (shared > 0)
         {
-            Log.Out("[KitsuneSharedMagazines] " + readerName + " read " + progressionName + " +" + levels
-                + ", shared with " + shared + " party member(s)");
+            Log.Out("[KitsuneSharedMagazines] " + readerName + " read " + bookItem + ", shared with "
+                + shared + " party member(s)");
         }
+    }
+
+    // Member side: "ksm_bookapply <perk> <book item> <reader name...>".
+    public static void OnBookApply(World world, string line)
+    {
+        string[] parts = line.Split(new[] { ' ' }, 4);
+        if (parts.Length < 3) return;
+        string readerName = parts.Length == 4 && parts[3].Length > 0 ? parts[3] : "A party member";
+        ApplyBook(world.GetPrimaryPlayer(), parts[1], parts[2], readerName);
+    }
+
+    // Mirrors the book's own effects: unlock its perk if this player hasn't
+    // read it, then grant the series bonus if that completes their set.
+    public static void ApplyBook(EntityPlayerLocal player, string perkName, string bookItem, string readerName)
+    {
+        ProgressionValue value = Book(player, perkName);
+        if (value == null || value.Level > 0) return;
+        value.Level = value.ProgressionClass.MaxLevel;
+
+        ProgressionValue bonus = SeriesBonusIfComplete(player, value.ProgressionClass.Parent);
+        if (bonus != null) bonus.Level = bonus.ProgressionClass.MaxLevel;
+
+        player.Progression.bProgressionStatsChanged = true;
+        player.bPlayerStatsChanged = true;
+
+        string bookName = ItemClass.GetItemClass(bookItem)?.GetLocalizedItemName();
+        if (string.IsNullOrEmpty(bookName)) bookName = bookItem;
+        string message = readerName + " shared " + bookName + " with you.";
+        if (bonus != null)
+        {
+            message += " That completes the series!";
+            Audio.Manager.PlayInsidePlayerHead("read_skillbook_final", player.entityId);
+        }
+        GameManager.ShowTooltip(player, message, false, false, 0f);
+    }
+
+    // Vanilla grants the series bonus perk (perk...Complete, a book in the same
+    // group) once 7 books in the group are unlocked — i.e. all the others.
+    // Returns the bonus when this player has just met that, else null.
+    private static ProgressionValue SeriesBonusIfComplete(EntityPlayerLocal player, ProgressionClass series)
+    {
+        if (series == null || series.Children == null) return null;
+        ProgressionValue bonus = null;
+        for (int i = 0; i < series.Children.Count; i++)
+        {
+            ProgressionClass child = series.Children[i];
+            ProgressionValue childValue = player.Progression.GetProgressionValue(child.Name);
+            if (childValue == null) return null;
+            if (child.Name.EndsWith("Complete", StringComparison.Ordinal))
+            {
+                bonus = childValue;
+                continue;
+            }
+            if (childValue.Level <= 0) return null;
+        }
+        return bonus != null && bonus.Level <= 0 ? bonus : null;
     }
 
     // Member side: "ksm_apply <skill> <levels> <reader name...>".
