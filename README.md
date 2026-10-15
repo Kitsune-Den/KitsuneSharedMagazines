@@ -29,12 +29,13 @@ Vanilla only checks for a series bonus while a volume is being read for the
 first time. Reading a volume you already know skips that check. So a player can
 end up with all 7 volumes and no bonus, and no later read will fix it.
 
-From 0.2.2 the mod checks again after every book read (even one you already
+From 0.2.3 the mod checks again after every book read (even one you already
 knew) and each time you load or join a game. If you have every volume in a
 series but not its bonus, you get the bonus, the final-book sound and a
 "Sniper series complete!" tooltip. An existing stuck save fixes itself the next
 time that player joins. This runs on each player's own client, so the client
-needs 0.2.2.
+needs 0.2.3 (0.2.2 shipped this check with a bug that stopped it from ever
+granting the bonus).
 
 ## How it works
 
