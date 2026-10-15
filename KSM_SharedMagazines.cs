@@ -39,6 +39,12 @@ using UnityEngine;
 // already knew it. The series "Complete" bonus is never shared as such: each
 // member earns it themselves, the vanilla way, when the shared volume leaves
 // them with every other book in the series unlocked.
+//
+// Series bonus self-heal: vanilla only checks for the bonus inside a volume's
+// own effect group, which is skipped when the reader already knows that
+// volume. A player who ends up with all seven unlocked without that check
+// passing is stuck without the bonus for good. So the check runs again on the
+// reader's client after every book read and when the player enters the game.
 
 public class KitsuneSharedMagazinesInit : IModApi
 {
@@ -125,7 +131,9 @@ public class KSM_BookReadHeldPatch
         if (__state == null) return;
         try
         {
-            KSM_Share.ReportBook(_actionData.invData.holdingEntity as EntityPlayerLocal, __state.Unlocks, __state.GetItemName());
+            EntityPlayerLocal player = _actionData.invData.holdingEntity as EntityPlayerLocal;
+            KSM_Share.HealSeriesOf(player, __state.Unlocks);
+            KSM_Share.ReportBook(player, __state.Unlocks, __state.GetItemName());
         }
         catch (Exception ex)
         {
@@ -157,11 +165,33 @@ public class KSM_BookReadInstantPatch
         if (__state == null || !__result) return;
         try
         {
-            KSM_Share.ReportBook(ent as EntityPlayerLocal, __state.Unlocks, __state.GetItemName());
+            EntityPlayerLocal player = ent as EntityPlayerLocal;
+            KSM_Share.HealSeriesOf(player, __state.Unlocks);
+            KSM_Share.ReportBook(player, __state.Unlocks, __state.GetItemName());
         }
         catch (Exception ex)
         {
             Log.Error("[KitsuneSharedMagazines] sharing a book failed: " + ex);
+        }
+    }
+}
+
+// Series bonus self-heal on entering the game, for saves already stuck with
+// every volume read and no bonus. A fresh character has no books to check.
+[HarmonyPatch(typeof(EntityPlayerLocal))]
+[HarmonyPatch("AfterPlayerRespawn")]
+public class KSM_SeriesBonusLoginPatch
+{
+    public static void Postfix(EntityPlayerLocal __instance, RespawnType _type)
+    {
+        if (_type != RespawnType.LoadedGame && _type != RespawnType.JoinMultiplayer) return;
+        try
+        {
+            KSM_Share.HealAllSeries(__instance);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("[KitsuneSharedMagazines] series bonus check failed: " + ex);
         }
     }
 }
@@ -464,6 +494,42 @@ public static class KSM_Share
             if (childValue.Level <= 0) return null;
         }
         return bonus != null && bonus.Level <= 0 ? bonus : null;
+    }
+
+    // Self-heal after a read: the series of the book perk just read.
+    public static void HealSeriesOf(EntityPlayerLocal player, string perkName)
+    {
+        if (player == null || player.isEntityRemote || string.IsNullOrEmpty(perkName)) return;
+        Progression.ProgressionClasses.TryGetValue(perkName, out ProgressionClass book);
+        if (book != null && book.IsBook) HealSeries(player, book.Parent);
+    }
+
+    // Self-heal on entering the game: every book series.
+    public static void HealAllSeries(EntityPlayerLocal player)
+    {
+        if (player == null || player.isEntityRemote || player.Progression == null) return;
+        foreach (ProgressionClass series in Progression.ProgressionClasses.Values)
+        {
+            if (series.IsBookGroup) HealSeries(player, series);
+        }
+    }
+
+    // Grants the series bonus when this player has every volume but not the
+    // bonus. A no-op whenever vanilla already granted it.
+    private static void HealSeries(EntityPlayerLocal player, ProgressionClass series)
+    {
+        ProgressionValue bonus = SeriesBonusIfComplete(player, series);
+        if (bonus == null) return;
+        bonus.Level = bonus.ProgressionClass.MaxLevel;
+        player.Progression.bProgressionStatsChanged = true;
+        player.bPlayerStatsChanged = true;
+
+        Log.Out("[KitsuneSharedMagazines] Granted the missing " + series.Name + " series bonus to "
+            + player.EntityName);
+        string seriesName = Localization.Get(series.NameKey, false);
+        if (string.IsNullOrEmpty(seriesName)) seriesName = series.Name;
+        Audio.Manager.PlayInsidePlayerHead("read_skillbook_final", player.entityId);
+        GameManager.ShowTooltip(player, seriesName + " series complete!", false, false, 0f);
     }
 
     // Member side: "ksm_apply <skill> <levels> <reader name...>".
