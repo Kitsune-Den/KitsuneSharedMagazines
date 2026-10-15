@@ -419,7 +419,7 @@ public static class KSM_Share
         // The named item must really be the book for that perk, and the
         // reader must really have it now.
         ItemClass book = ItemClass.GetItemClass(parts[2]);
-        if (book == null || !string.Equals(book.Unlocks, parts[1], StringComparison.Ordinal)) return;
+        if (book == null || !string.Equals(book.Unlocks, parts[1], StringComparison.OrdinalIgnoreCase)) return;
         EntityPlayer reader = world.GetEntity(sender.entityId) as EntityPlayer;
         if (Book(reader, parts[1]) == null) return;
 
@@ -477,6 +477,8 @@ public static class KSM_Share
     // Vanilla grants the series bonus perk (perk...Complete, a book in the same
     // group) once 7 books in the group are unlocked — i.e. all the others.
     // Returns the bonus when this player has just met that, else null.
+    // ProgressionClass names are lowercased on load ("perksnipercomplete"),
+    // so the suffix match must ignore case.
     private static ProgressionValue SeriesBonusIfComplete(EntityPlayerLocal player, ProgressionClass series)
     {
         if (series == null || series.Children == null) return null;
@@ -486,7 +488,7 @@ public static class KSM_Share
             ProgressionClass child = series.Children[i];
             ProgressionValue childValue = player.Progression.GetProgressionValue(child.Name);
             if (childValue == null) return null;
-            if (child.Name.EndsWith("Complete", StringComparison.Ordinal))
+            if (child.Name.EndsWith("Complete", StringComparison.OrdinalIgnoreCase))
             {
                 bonus = childValue;
                 continue;
