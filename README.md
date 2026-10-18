@@ -71,3 +71,7 @@ by default. Override that with `-p:GameDir=...`. The deployable mod folder is
 
 Both builds compile: against the 3.3 client and against the 3.3 dedicated
 server. The party flow still needs two players to try it.
+
+## License
+
+[CC BY-NC-SA 4.0](LICENSE), with an extra permission for servers that make money: see [NOTICE.md](NOTICE.md). In short: play it, change it and share it, with credit, not for sale, and with changed versions under the same license.
