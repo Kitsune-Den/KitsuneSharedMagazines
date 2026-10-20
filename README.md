@@ -1,7 +1,7 @@
 # KitsuneSharedMagazines
 
-When you read a crafting skill magazine or a perk book, everyone in your party
-learns it too, wherever they are on the map.
+When you read a crafting skill magazine, a perk book or a schematic, everyone in
+your party learns it too, wherever they are on the map.
 
 Built for 7DTD V3.3. Ships a DLL: install on the **server and every client**,
 with **EAC off** on the server and on each client.
@@ -17,11 +17,18 @@ with **EAC off** on the server and on each client.
   hasn't read that volume gets it unlocked, even if the reader already knew
   it. Members who already have it get nothing. The series bonus is never copied from the reader: a member gets it
   only when the shared volume completes *their* set, same as vanilla.
+- **Schematics** (from 0.3.0): any item whose `Unlocks` names a learnable
+  recipe, which covers all 69 vanilla schematics and recipes (mods, armor and
+  vehicle mods, Sham Chowder, Grace's corn and so on). A member who doesn't
+  know the recipe learns it, even if the reader already knew it. Members who
+  already know it get nothing. Members get the recipe only, not the reader's
+  XP for reading it.
 - Party members must be online. Distance doesn't matter.
 - Each member sees the normal crafting-skill notification and unlock messages,
   plus a tooltip: "NonToxThicc shared a Harvesting Tools magazine with you."
   Books show "... shared <book> with you.", with "That completes the series!"
-  and the final-book sound when it does.
+  and the final-book sound when it does. Schematics show "... shared
+  <schematic> with you."
 
 ## Series bonus self-heal
 
@@ -44,16 +51,20 @@ console-command packages and intercept them with Harmony:
 
 1. The reader's client notices a magazine was read for a crafting skill and sends
    `ksm_read <skill> <levels>` to the server. Reading a perk book sends
-   `ksm_book <perk> <book item>`.
+   `ksm_book <perk> <book item>`, and reading a schematic sends
+   `ksm_schem <schematic item>`.
 2. The server catches that before it reaches the console, checks it (crafting
    skill, 1-10 levels, at most one read per 0.5 s per player), and sends
    `ksm_apply <skill> <levels> <reader>` (or `ksm_bookapply <perk> <book item>
-   <reader>`, after checking that item really is the book for that perk) to every
-   other party member.
+   <reader>`, after checking that item really is the book for that perk, or
+   `ksm_schemapply <schematic item> <reader>`, after checking that item really
+   unlocks a learnable recipe) to every other party member.
 3. Each member's client catches that and raises the skill the same way the
-   magazine would. Progression then syncs back to the server as usual.
+   magazine would. Progression then syncs back to the server as usual. For a
+   schematic it sets the recipe's cvar to 1, exactly as the schematic does,
+   and that syncs with the member's player data.
 
-Neither line is a registered console command, so players can't type them in F1.
+None of these lines is a registered console command, so players can't type them in F1.
 A mismatch never drops anyone. A member without the mod just sees
 "unknown command" in their console, and so does a reader on a server without it.
 
@@ -70,7 +81,8 @@ by default. Override that with `-p:GameDir=...`. The deployable mod folder is
 ## Not yet tested in game
 
 Both builds compile: against the 3.3 client and against the 3.3 dedicated
-server. The party flow still needs two players to try it.
+server. The party flow still needs two players to try it. Schematic sharing
+(0.3.0) has only been compiled against the 3.3 client so far.
 
 ## License
 
