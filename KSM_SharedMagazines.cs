@@ -40,6 +40,13 @@ using UnityEngine;
 // member earns it themselves, the vanilla way, when the shared volume leaves
 // them with every other book in the series unlocked.
 //
+// Schematics ride the same hops too: "ksm_schem <schematic item>" up,
+// "ksm_schemapply <schematic item> <reader name>" down. A schematic is any item
+// whose "Unlocks" names a learnable recipe (all 69 vanilla ones). Reading one
+// sets a player cvar named after the recipe to 1, and that is all a member
+// gets: the recipe, not the reader's XP. Shared whenever it is read, like books;
+// members who already know the recipe are skipped on their side.
+//
 // Series bonus self-heal: vanilla only checks for the bonus inside a volume's
 // own effect group, which is skipped when the reader already knows that
 // volume. A player who ends up with all seven unlocked without that check
@@ -101,7 +108,7 @@ public class KSM_MagazineReadPatch
     }
 }
 
-// Step 1 for perk books. Hooked on the read itself (ItemActionEat), not on the
+// Step 1 for perk books and schematics. Hooked on the read itself (ItemActionEat), not on the
 // book's unlock effect: that effect is skipped when the reader already knows
 // the book (vanilla's ProgressionLevel == 0 requirement), but the book is still
 // read and used up, so it should still teach the party. Members who already
@@ -118,7 +125,7 @@ public class KSM_BookReadHeldPatch
         {
             if (!(_actionData is ItemActionEat.MyInventoryData data) || !data.bEatingStarted) return;
             if (!(_actionData.invData?.holdingEntity is EntityPlayerLocal player) || player.isEntityRemote) return;
-            __state = KSM_Share.BookClass(_actionData.invData.itemStack?.itemValue);
+            __state = KSM_Share.SharedReadClass(_actionData.invData.itemStack?.itemValue);
         }
         catch (Exception ex)
         {
@@ -131,9 +138,7 @@ public class KSM_BookReadHeldPatch
         if (__state == null) return;
         try
         {
-            EntityPlayerLocal player = _actionData.invData.holdingEntity as EntityPlayerLocal;
-            KSM_Share.HealSeriesOf(player, __state.Unlocks);
-            KSM_Share.ReportBook(player, __state.Unlocks, __state.GetItemName());
+            KSM_Share.OnLocalRead(_actionData.invData.holdingEntity as EntityPlayerLocal, __state);
         }
         catch (Exception ex)
         {
@@ -152,7 +157,7 @@ public class KSM_BookReadInstantPatch
         try
         {
             if (!(ent is EntityPlayerLocal player) || player.isEntityRemote) return;
-            __state = KSM_Share.BookClass(stack?.itemValue);
+            __state = KSM_Share.SharedReadClass(stack?.itemValue);
         }
         catch (Exception ex)
         {
@@ -165,9 +170,7 @@ public class KSM_BookReadInstantPatch
         if (__state == null || !__result) return;
         try
         {
-            EntityPlayerLocal player = ent as EntityPlayerLocal;
-            KSM_Share.HealSeriesOf(player, __state.Unlocks);
-            KSM_Share.ReportBook(player, __state.Unlocks, __state.GetItemName());
+            KSM_Share.OnLocalRead(ent as EntityPlayerLocal, __state);
         }
         catch (Exception ex)
         {
@@ -207,11 +210,13 @@ public class KSM_ServerInboxPatch
         string cmd = __instance.cmd;
         bool isRead = cmd != null && cmd.StartsWith(KSM_Share.ReadVerb + " ", StringComparison.Ordinal);
         bool isBook = cmd != null && cmd.StartsWith(KSM_Share.BookVerb + " ", StringComparison.Ordinal);
-        if (!isRead && !isBook) return true;
+        bool isSchem = cmd != null && cmd.StartsWith(KSM_Share.SchematicVerb + " ", StringComparison.Ordinal);
+        if (!isRead && !isBook && !isSchem) return true;
         try
         {
             if (_world != null && isRead) KSM_Share.OnReadReport(_world, __instance.Sender, cmd);
             if (_world != null && isBook) KSM_Share.OnBookReport(_world, __instance.Sender, cmd);
+            if (_world != null && isSchem) KSM_Share.OnSchematicReport(_world, __instance.Sender, cmd);
         }
         catch (Exception ex)
         {
@@ -232,11 +237,13 @@ public class KSM_ClientInboxPatch
         if (!__instance.bExecute || lines == null || lines.Count == 0 || lines[0] == null) return true;
         bool isApply = lines[0].StartsWith(KSM_Share.ApplyVerb + " ", StringComparison.Ordinal);
         bool isBook = lines[0].StartsWith(KSM_Share.BookApplyVerb + " ", StringComparison.Ordinal);
-        if (!isApply && !isBook) return true;
+        bool isSchem = lines[0].StartsWith(KSM_Share.SchematicApplyVerb + " ", StringComparison.Ordinal);
+        if (!isApply && !isBook && !isSchem) return true;
         try
         {
             if (_world != null && isApply) KSM_Share.OnApply(_world, lines[0]);
             if (_world != null && isBook) KSM_Share.OnBookApply(_world, lines[0]);
+            if (_world != null && isSchem) KSM_Share.OnSchematicApply(_world, lines[0]);
         }
         catch (Exception ex)
         {
@@ -252,6 +259,8 @@ public static class KSM_Share
     public const string ApplyVerb = "ksm_apply";
     public const string BookVerb = "ksm_book";
     public const string BookApplyVerb = "ksm_bookapply";
+    public const string SchematicVerb = "ksm_schem";
+    public const string SchematicApplyVerb = "ksm_schemapply";
 
     // A magazine read takes about a second (Eat action Delay 1.0), so a faster
     // stream of reports from one player is not real reading.
@@ -373,6 +382,27 @@ public static class KSM_Share
             shared++;
         }
         return shared;
+    }
+
+    // ---- Perk books and schematics: the read hooks ----
+
+    // The item class when this item is a perk book or a schematic, else null.
+    public static ItemClass SharedReadClass(ItemValue itemValue)
+    {
+        return BookClass(itemValue) ?? SchematicClass(itemValue);
+    }
+
+    // Reader's client, after a book or schematic was read.
+    public static void OnLocalRead(EntityPlayerLocal player, ItemClass itemClass)
+    {
+        if (player == null || itemClass == null) return;
+        if (Progression.ProgressionClasses.ContainsKey(itemClass.Unlocks))
+        {
+            HealSeriesOf(player, itemClass.Unlocks);
+            ReportBook(player, itemClass.Unlocks, itemClass.GetItemName());
+            return;
+        }
+        ReportSchematic(player, itemClass.GetItemName());
     }
 
     // ---- Perk books ----
@@ -532,6 +562,94 @@ public static class KSM_Share
         if (string.IsNullOrEmpty(seriesName)) seriesName = series.Name;
         Audio.Manager.PlayInsidePlayerHead("read_skillbook_final", player.entityId);
         GameManager.ShowTooltip(player, seriesName + " series complete!", false, false, 0f);
+    }
+
+    // ---- Schematics ----
+
+    // The schematic's item class when its Unlocks names a learnable recipe,
+    // else null. Perk books and magazines never match: their Unlocks names a
+    // perk or skill, not a recipe.
+    public static ItemClass SchematicClass(ItemValue itemValue)
+    {
+        ItemClass itemClass = itemValue?.ItemClass;
+        return SchematicRecipe(itemClass) != null ? itemClass : null;
+    }
+
+    public static Recipe SchematicRecipe(ItemClass itemClass)
+    {
+        if (itemClass == null || string.IsNullOrEmpty(itemClass.Unlocks)) return null;
+        if (Progression.ProgressionClasses.ContainsKey(itemClass.Unlocks)) return null;
+        Recipe recipe = CraftingManager.GetRecipe(itemClass.Unlocks);
+        return recipe != null && recipe.IsLearnable ? recipe : null;
+    }
+
+    public static void ReportSchematic(EntityPlayerLocal reader, string schematicItem)
+    {
+        if (reader == null || schematicItem == null) return;
+        ConnectionManager connections = SingletonMonoBehaviour<ConnectionManager>.Instance;
+        if (connections == null) return;
+        if (connections.IsServer)
+        {
+            ShareSchematic(reader, reader.EntityName, schematicItem);
+            return;
+        }
+        connections.SendToServer(NetPackageManager.GetPackage<NetPackageConsoleCmdServer>()
+            .Setup(SchematicVerb + " " + schematicItem));
+    }
+
+    // Server side: "ksm_schem <schematic item>" from a client. The reader's
+    // recipe cvar is set on their client and reaches the server later with
+    // their player data, so only the item itself is checked here.
+    public static void OnSchematicReport(World world, ClientInfo sender, string cmd)
+    {
+        if (sender == null) return;
+        string[] parts = cmd.Split(' ');
+        if (parts.Length != 2) return;
+        if (SchematicRecipe(ItemClass.GetItemClass(parts[1])) == null) return;
+        EntityPlayer reader = world.GetEntity(sender.entityId) as EntityPlayer;
+        if (reader == null) return;
+
+        if (!TakeReportSlot(sender)) return;
+        ShareSchematic(reader, sender.playerName, parts[1]);
+    }
+
+    public static void ShareSchematic(EntityPlayer reader, string readerName, string schematicItem)
+    {
+        int shared = SendToParty(reader,
+            host => ApplySchematic(host, schematicItem, readerName),
+            SchematicApplyVerb + " " + schematicItem + " " + readerName);
+
+        if (shared > 0)
+        {
+            Log.Out("[KitsuneSharedMagazines] " + readerName + " read " + schematicItem + ", shared with "
+                + shared + " party member(s)");
+        }
+    }
+
+    // Member side: "ksm_schemapply <schematic item> <reader name...>".
+    public static void OnSchematicApply(World world, string line)
+    {
+        string[] parts = line.Split(new[] { ' ' }, 3);
+        if (parts.Length < 2) return;
+        string readerName = parts.Length == 3 && parts[2].Length > 0 ? parts[2] : "A party member";
+        ApplySchematic(world.GetPrimaryPlayer(), parts[1], readerName);
+    }
+
+    // Mirrors the schematic's own effect: the recipe's cvar set to 1 on the
+    // local player, which saves and syncs with their player data. Players who
+    // already know the recipe get nothing.
+    public static void ApplySchematic(EntityPlayerLocal player, string schematicItem, string readerName)
+    {
+        if (player == null) return;
+        ItemClass schematic = ItemClass.GetItemClass(schematicItem);
+        Recipe recipe = SchematicRecipe(schematic);
+        if (recipe == null || player.GetCVar(recipe.GetName()) > 0f) return;
+        player.SetCVar(recipe.GetName(), 1f);
+        player.bPlayerStatsChanged = true;
+
+        string schematicName = schematic.GetLocalizedItemName();
+        if (string.IsNullOrEmpty(schematicName)) schematicName = schematicItem;
+        GameManager.ShowTooltip(player, readerName + " shared " + schematicName + " with you.", false, false, 0f);
     }
 
     // Member side: "ksm_apply <skill> <levels> <reader name...>".
