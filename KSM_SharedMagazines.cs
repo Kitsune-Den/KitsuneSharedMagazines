@@ -270,6 +270,15 @@ public static class KSM_Share
     private static readonly FastTags<TagGroup.Global> MagazineTag = FastTags<TagGroup.Global>.Parse("csm");
     private static readonly Dictionary<int, float> lastReportAt = new Dictionary<int, float>();
 
+    // Player-facing text from Config/Localization.csv (V3.x) / .txt (V2.x),
+    // with the English as a fallback if the key didn't load.
+    private static string Text(string key, string english)
+    {
+        return Localization.Exists(key) ? Localization.Get(key, false) : english;
+    }
+
+    private static string PartyMember => Text("ksmPartyMember", "A party member");
+
     // The local player among an action's targets, if any (null on a dedicated
     // server, where every reader is remote).
     public static EntityPlayerLocal LocalTarget(MinEventActionTargetedBase action)
@@ -475,7 +484,7 @@ public static class KSM_Share
     {
         string[] parts = line.Split(new[] { ' ' }, 4);
         if (parts.Length < 3) return;
-        string readerName = parts.Length == 4 && parts[3].Length > 0 ? parts[3] : "A party member";
+        string readerName = parts.Length == 4 && parts[3].Length > 0 ? parts[3] : PartyMember;
         ApplyBook(world.GetPrimaryPlayer(), parts[1], parts[2], readerName);
     }
 
@@ -495,13 +504,11 @@ public static class KSM_Share
 
         string bookName = ItemClass.GetItemClass(bookItem)?.GetLocalizedItemName();
         if (string.IsNullOrEmpty(bookName)) bookName = bookItem;
-        string message = readerName + " shared " + bookName + " with you.";
-        if (bonus != null)
-        {
-            message += " That completes the series!";
-            Audio.Manager.PlayInsidePlayerHead("read_skillbook_final", player.entityId);
-        }
-        GameManager.ShowTooltip(player, message, false, false, 0f);
+        string message = bonus != null
+            ? Text("ksmMsgSharedItemSeries", "{0} shared {1} with you. That completes the series!")
+            : Text("ksmMsgSharedItem", "{0} shared {1} with you.");
+        if (bonus != null) Audio.Manager.PlayInsidePlayerHead("read_skillbook_final", player.entityId);
+        GameManager.ShowTooltip(player, string.Format(message, readerName, bookName), false, false, 0f);
     }
 
     // Vanilla grants the series bonus perk (perk...Complete, a book in the same
@@ -561,7 +568,8 @@ public static class KSM_Share
         string seriesName = Localization.Get(series.NameKey, false);
         if (string.IsNullOrEmpty(seriesName)) seriesName = series.Name;
         Audio.Manager.PlayInsidePlayerHead("read_skillbook_final", player.entityId);
-        GameManager.ShowTooltip(player, seriesName + " series complete!", false, false, 0f);
+        GameManager.ShowTooltip(player, string.Format(Text("ksmMsgSeriesComplete", "{0} series complete!"), seriesName),
+            false, false, 0f);
     }
 
     // ---- Schematics ----
@@ -631,7 +639,7 @@ public static class KSM_Share
     {
         string[] parts = line.Split(new[] { ' ' }, 3);
         if (parts.Length < 2) return;
-        string readerName = parts.Length == 3 && parts[2].Length > 0 ? parts[2] : "A party member";
+        string readerName = parts.Length == 3 && parts[2].Length > 0 ? parts[2] : PartyMember;
         ApplySchematic(world.GetPrimaryPlayer(), parts[1], readerName);
     }
 
@@ -649,7 +657,8 @@ public static class KSM_Share
 
         string schematicName = schematic.GetLocalizedItemName();
         if (string.IsNullOrEmpty(schematicName)) schematicName = schematicItem;
-        GameManager.ShowTooltip(player, readerName + " shared " + schematicName + " with you.", false, false, 0f);
+        GameManager.ShowTooltip(player, string.Format(Text("ksmMsgSharedItem", "{0} shared {1} with you."), readerName,
+            schematicName), false, false, 0f);
     }
 
     // Member side: "ksm_apply <skill> <levels> <reader name...>".
@@ -658,7 +667,7 @@ public static class KSM_Share
         string[] parts = line.Split(new[] { ' ' }, 4);
         if (parts.Length < 3 || !int.TryParse(parts[2], out int levels)) return;
         if (levels < 1 || levels > MaxLevelsPerRead) return;
-        string readerName = parts.Length == 4 && parts[3].Length > 0 ? parts[3] : "A party member";
+        string readerName = parts.Length == 4 && parts[3].Length > 0 ? parts[3] : PartyMember;
         Apply(world.GetPrimaryPlayer(), parts[1], levels, readerName);
     }
 
@@ -685,6 +694,7 @@ public static class KSM_Share
 
         string skillName = Localization.Get(value.ProgressionClass.NameKey, false);
         if (string.IsNullOrEmpty(skillName)) skillName = progressionName;
-        GameManager.ShowTooltip(player, readerName + " shared a " + skillName + " magazine with you.", false, false, 0f);
+        GameManager.ShowTooltip(player, string.Format(Text("ksmMsgSharedMagazine", "{0} shared a {1} magazine with you."),
+            readerName, skillName), false, false, 0f);
     }
 }

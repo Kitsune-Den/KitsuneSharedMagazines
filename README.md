@@ -44,6 +44,16 @@ time that player joins. This runs on each player's own client, so the client
 needs 0.2.3 (0.2.2 shipped this check with a bug that stopped it from ever
 granting the bonus).
 
+## Languages
+
+From 0.4.0 the tooltips are translated into German, Spanish, French, Italian,
+Japanese, Korean, Polish, Brazilian Portuguese, Russian, Turkish, and
+Simplified and Traditional Chinese. The text lives in
+`Config/Localization.csv` (read by V3.x) and `Config/Localization.txt` (read by
+V2.x); keep the two in sync. Book, schematic, skill and series names come from
+the game's own translations. If a key is missing, the tooltip falls back to
+English.
+
 ## How it works
 
 The mod adds no new network packages. All three hops reuse the vanilla
@@ -76,13 +86,14 @@ dotnet build -c Release
 
 This builds against the 3.3 client at `G:\SteamLibrary\steamapps\common\7 Days To Die`
 by default. Override that with `-p:GameDir=...`. The deployable mod folder is
-`KitsuneSharedMagazines/` (ModInfo.xml + DLL); copy it into `Mods/`.
+`KitsuneSharedMagazines/` (ModInfo.xml, DLL and `Config/`); copy it into `Mods/`.
 
 ## Not yet tested in game
 
 Both builds compile: against the 3.3 client and against the 3.3 dedicated
 server. The party flow still needs two players to try it. Schematic sharing
-(0.3.0) has only been compiled against the 3.3 client so far.
+(0.3.0) has only been compiled against the 3.3 client so far. The translations
+(0.4.0) load on the 3.3 dedicated server but haven't been seen in game yet.
 
 ## License
 
