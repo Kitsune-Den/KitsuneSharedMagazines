@@ -8,8 +8,11 @@ with **EAC off** on the server and on each client.
 
 ## What gets shared
 
-- **Magazines:** only crafting skills, and only from items tagged `csm`, which
-  covers all 24 vanilla skill magazines. The admin max-all magazine is never shared.
+- **Magazines:** only crafting skills, from items tagged `csm` (all 24 vanilla
+  skill magazines) or, from 0.3.1, any item whose `Unlocks` names a crafting
+  skill, so modded magazines that skip the tag are shared too. Skill levels
+  gained by doing (crafting or harvesting under a learn-by-doing overhaul) are
+  not shared. The admin max-all magazine is never shared.
   Members get what the magazine is worth (the `PointsPerMagazine` sandbox
   option), even when the reader's own skill is already maxed. Each member is
   capped at their own max level.
@@ -23,6 +26,15 @@ with **EAC off** on the server and on each client.
   know the recipe learns it, even if the reader already knew it. Members who
   already know it get nothing. Members get the recipe only, not the reader's
   XP for reading it.
+- **Recipes and mods, all of them:** every recipe in the game is learned one
+  of two ways, and both are shared. Recipes that come with crafting skill
+  levels (most weapons, tools, armor, food, ammo, workstations and anything
+  other mods hang off those skills) arrive with the shared magazine levels.
+  Recipes from a schematic (every weapon, armor, vehicle and drone mod, plus
+  the recipe schematics) arrive with the shared schematic.
+- **Other mods' items:** books and schematics are matched by what they unlock,
+  not by name, so a mod that adds its own perk books, schematics or magazines
+  in the vanilla style is shared without any changes here.
 - Party members must be online. Distance doesn't matter.
 - Each member sees the normal crafting-skill notification and unlock messages,
   plus a tooltip: "NonToxThicc shared a Harvesting Tools magazine with you."

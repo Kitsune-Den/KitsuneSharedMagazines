@@ -29,7 +29,8 @@ using UnityEngine;
 // anyone. Listen-server hosts are handled in-process (see Share/Apply).
 //
 // Only crafting skills (ProgressionType.Crafting) are shared, and only from
-// items tagged "csm" — the 24 vanilla skill magazines. The admin max-all
+// items tagged "csm" (the 24 vanilla skill magazines) or whose "Unlocks" names
+// a crafting skill (modded magazines without the tag). The admin max-all
 // magazine (tag "admin", level -1) is deliberately excluded.
 //
 // Perk books (the "1/7" series volumes) ride the same three hops with their
@@ -283,10 +284,18 @@ public static class KSM_Share
         return null;
     }
 
+    // Tagged "csm", or naming a crafting skill in Unlocks the way every vanilla
+    // magazine does, so a modded magazine that skips the tag is still shared.
+    // Learn-by-doing progress (crafting or harvesting with a tool in hand) never
+    // matches: tools don't name a skill in Unlocks.
     public static bool IsMagazine(MinEventParams _params)
     {
         ItemClass itemClass = _params?.ItemValue?.ItemClass;
-        return itemClass != null && itemClass.ItemTags.Test_AnySet(MagazineTag);
+        if (itemClass == null) return false;
+        if (itemClass.ItemTags.Test_AnySet(MagazineTag)) return true;
+        if (string.IsNullOrEmpty(itemClass.Unlocks)) return false;
+        Progression.ProgressionClasses.TryGetValue(itemClass.Unlocks, out ProgressionClass skill);
+        return skill != null && skill.IsCrafting;
     }
 
     public static ProgressionValue CraftingSkill(EntityAlive player, string progressionName)
